@@ -114,22 +114,225 @@ dataset['sub_metering_4'] = (values[:,0] * 1000 / 60) - (values[:,4] + values[:,
 dataset.to_csv('household_power_consumption.csv')
 ```
 
+# Model Evaluation
+In this section, we will consider how we can develop and evaluate predictive models for the household power dataset.
+
+This section is divided into four parts; they are:
+
+- Problem Framing
+- Evaluation Metric
+- Train and Test Sets
+- Walk-Forward Validation
+
+  ## Problem Framing
+  we will use the data to explore a very specific question; that is:
+
+<h2>" Given recent power consumption, what is the expected power consumption for the week ahead ? "</h2>
+
+This requires that a predictive model forecast the total active power for each day over the next seven days.
+
+Technically, this framing of the problem is referred to as a multi-step time series forecasting problem, given the multiple forecast steps. A model that makes use of multiple input variables may be referred to as a multivariate multi-step time series forecasting model.
+
+A model of this type could be helpful within the household in planning expenditures. It could also be helpful on the supply side for planning electricity demand for a specific household.
+
+This framing of the dataset also suggests that it would be useful to downsample the per-minute observations of power consumption to daily totals. This is not required, but makes sense, given that we are interested in total power per day.
+
+
+-  We can achieve this easily using the resample() function on the pandas DataFrame. Calling this function with the argument ‘D‘ allows the loaded data indexed by date-time to be grouped by day 
+   (see all offset aliases). We can then calculate the sum of all observations for each day and create a new dataset of daily power consumption data for each of the eight variables.
+
+    The complete example is listed below.
+
+ <code>
+# resample minute data to total for each day
+from pandas import read_csv
+# load the new file
+dataset = read_csv('household_power_consumption.csv', header=0, infer_datetime_format=True, parse_dates=['datetime'], index_col=['datetime'])
+# resample data to daily
+daily_groups = dataset.resample('D')
+daily_data = daily_groups.sum()
+# summarize
+print(daily_data.shape)
+print(daily_data.head())
+# save
+daily_data.to_csv('household_power_consumption_days.csv')
+ </code>
+
+- Running the example creates a new daily total power consumption dataset and saves the result into a separate file named ‘household_power_consumption_days.csv‘.
+
+  We can use this as the dataset for fitting and evaluating predictive models for the chosen framing of the problem.
+
+ ## Evaluation Metric
+
+<pre>
+A forecast will be comprised of seven values, one for each day of the week ahead.
+
+It is common with multi-step forecasting problems to evaluate each forecasted time step separately. This is helpful for a few reasons:
+
+To comment on the skill at a specific lead time (e.g. +1 day vs +3 days).
+To contrast models based on their skills at different lead times (e.g. models good at +1 day vs models good at days +5).
+The units of the total power are kilowatts and it would be useful to have an error metric that was also in the same units. Both Root Mean Squared Error (RMSE) and Mean Absolute Error (MAE) fit this bill, although RMSE is more commonly used and will be adopted in this tutorial. Unlike MAE, RMSE is more punishing of forecast errors.
+
+The performance metric for this problem will be the RMSE for each lead time from day 1 to day 7.
+
+As a short-cut, it may be useful to summarize the performance of a model using a single score in order to aide in model selection.
+
+One possible score that could be used would be the RMSE across all forecast days.
+
+The function evaluate_forecasts() below will implement this behavior and return the performance of a model based on multiple seven-day forecasts.
+</pre>
+ 
+
+<code>
+# evaluate one or more weekly forecasts against expected values
+def evaluate_forecasts(actual, predicted):
+	scores = list()
+	# calculate an RMSE score for each day
+	for i in range(actual.shape[1]):
+		# calculate mse
+		mse = mean_squared_error(actual[:, i], predicted[:, i])
+		# calculate rmse
+		rmse = sqrt(mse)
+		# store
+		scores.append(rmse)
+	# calculate overall RMSE
+	s = 0
+	for row in range(actual.shape[0]):
+		for col in range(actual.shape[1]):
+			s += (actual[row, col] - predicted[row, col])**2
+	score = sqrt(s / (actual.shape[0] * actual.shape[1]))
+	return score, scores
+</code>
+
+
+Running the function will first return the overall RMSE regardless of day, then an array of RMSE scores for each day.
+
+## Train and Test Sets
+
+<pre>
+We will use the first three years of data for training predictive models and the final year for evaluating models.
+
+The data in a given dataset will be divided into standard weeks. These are weeks that begin on a Sunday and end on a Saturday.
+
+This is a realistic and useful way for using the chosen framing of the model, where the power consumption for the week ahead can be predicted. It is also helpful with modeling, where models can be used to predict a specific day (e.g. Wednesday) or the entire sequence.
+
+We will split the data into standard weeks, working backwards from the test dataset.
+
+The final year of the data is in 2010 and the first Sunday for 2010 was January 3rd. The data ends in mid November 2010 and the closest final Saturday in the data is November 20th. This gives 46 weeks of test data.
+
+The first and last rows of daily data for the test dataset are provided below for confirmation.
+
+The daily data starts in late 2006.
+
+The first Sunday in the dataset is December 17th, which is the second row of data.
+
+Organizing the data into standard weeks gives 159 full standard weeks for training a predictive model.
+The function split_dataset() below splits the daily data into train and test sets and organizes each into standard weeks.
+
+Specific row offsets are used to split the data using knowledge of the dataset. The split datasets are then organized into weekly data using the NumPy split() function.
+
+# split a univariate dataset into train/test sets
+def split_dataset(data):
+	# split into standard weeks
+	train, test = data[1:-328], data[-328:-6]
+	# restructure into windows of weekly data
+	train = array(split(train, len(train)/7))
+	test = array(split(test, len(test)/7))
+	return train, test
+
+We can test this function out by loading the daily dataset and printing the first and last rows of data from both 
+the train and test sets to confirm they match the expectations above.
+
+	
+</pre>
+
+#### The complete code example is listed below.
 
 
 
+```
+# split into standard weeks
+from numpy import split
+from numpy import array
+from pandas import read_csv
 
+# split a univariate dataset into train/test sets
+def split_dataset(data):
+	# split into standard weeks
+	train, test = data[1:-328], data[-328:-6]
+	# restructure into windows of weekly data
+	train = array(split(train, len(train)/7))
+	test = array(split(test, len(test)/7))
+	return train, test
 
+# load the new file
+dataset = read_csv('household_power_consumption_days.csv', header=0, infer_datetime_format=True, parse_dates=['datetime'], index_col=['datetime'])
+train, test = split_dataset(dataset.values)
+# validate train data
+print(train.shape)
+print(train[0, 0, 0], train[-1, -1, 0])
+# validate test
+print(test.shape)
+print(test[0, 0, 0], test[-1, -1, 0])
+```
 
+Running the example shows that indeed the train dataset has 159 weeks of data, whereas the test dataset has 46 weeks.
 
+We can see that the total active power for the train and test dataset for the first and last rows match the data for the specific dates that we defined as the bounds on the standard weeks for each set.
 
+## Walk-Forward Validation
 
+<pre>
+Models will be evaluated using a scheme called walk-forward validation.
 
+This is where a model is required to make a one week prediction, then the actual data for that week is made available to the model so that it can be used as the basis for making a prediction on the subsequent week. This is both realistic for how the model may be used in practice and beneficial to the models allowing them to make use of the best available data.
 
+We can demonstrate this below with separation of input data and output/predicted data.
 
+The walk-forward validation approach to evaluating predictive models on this dataset is provided below named evaluate_model().
 
+The train and test datasets in standard-week format are provided to the function as arguments. An additional argument n_input is provided that is used to define the number of prior observations that the model will use as input in order to make a prediction.
 
+Two new functions are called: one to build a model from the training data called build_model() and another that uses the model to make forecasts for each new standard week called forecast(). These will be covered in subsequent sections.
 
+We are working with neural networks, and as such, they are generally slow to train but fast to evaluate. This means that the preferred usage of the models is to build them once on historical data and to use them to forecast each step of the walk-forward validation. The models are static (i.e. not updated) during their evaluation.
 
+This is different to other models that are faster to train where a model may be re-fit or updated each step of the walk-forward validation as new data is made available. With sufficient resources, it is possible to use neural networks this way, but we will not in this tutorial.
 
+The complete evaluate_model() function is listed below.
+	
+</pre>
+```
+# evaluate a single model
+def evaluate_model(train, test, n_input):
+	# fit model
+	model = build_model(train, n_input)
+	# history is a list of weekly data
+	history = [x for x in train]
+	# walk-forward validation over each week
+	predictions = list()
+	for i in range(len(test)):
+		# predict the week
+		yhat_sequence = forecast(model, history, n_input)
+		# store the predictions
+		predictions.append(yhat_sequence)
+		# get real observation and add to history for predicting the next week
+		history.append(test[i, :])
+	# evaluate predictions days for each week
+	predictions = array(predictions)
+	score, scores = evaluate_forecasts(test[:, :, 0], predictions)
+	return score, scores
+```
 
+Once we have the evaluation for a model, we can summarize the performance.
+
+The function below named summarize_scores() will display the performance of a model as a single line for easy comparison with other models
+
+```
+# summarize scores
+def summarize_scores(name, score, scores):
+	s_scores = ', '.join(['%.1f' % s for s in scores])
+	print('%s: [%.3f] %s' % (name, score, s_scores))
+```
+#### We now have all of the elements to begin evaluating predictive models on the dataset.
 
